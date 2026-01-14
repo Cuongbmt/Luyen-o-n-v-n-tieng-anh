@@ -1,7 +1,6 @@
 import { GoogleGenAI, Modality, Type } from "@google/genai";
 import { WordInfo, Sentence } from "../types";
 
-// Hàm lấy API Key an toàn
 const getSafeApiKey = () => {
   try {
     return process.env.API_KEY || '';
@@ -10,16 +9,15 @@ const getSafeApiKey = () => {
   }
 };
 
-const ai = new GoogleGenAI({ apiKey: getSafeApiKey() });
-
 export const geminiService = {
   async splitSentences(text: string): Promise<Omit<Sentence, 'id'>[]> {
+    const ai = new GoogleGenAI({ apiKey: getSafeApiKey() });
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: `Phân tích đoạn văn tiếng Anh sau. Tách nó thành từng câu riêng biệt. Với mỗi câu, hãy cung cấp: 
       1. Bản dịch tiếng Việt chính xác.
       2. Phiên âm IPA (International Phonetic Alphabet) cho toàn bộ câu đó.
-      Trả về kết quả dưới dạng JSON array. Text: "${text}"`,
+      Trả về kết quả dưới dạng JSON array thuần túy. Text: "${text}"`,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -38,18 +36,21 @@ export const geminiService = {
     });
 
     try {
-      const result = JSON.parse(response.text || "[]");
-      return result;
+      // Làm sạch chuỗi trước khi parse (đôi khi AI trả về ```json ... ```)
+      let rawText = response.text || "[]";
+      rawText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+      return JSON.parse(rawText);
     } catch (e) {
-      console.error("Error parsing JSON:", e);
-      return [{ text, translation: "Lỗi phân tích văn bản", phonetic: "N/A" }];
+      console.error("Lỗi parse JSON:", e);
+      throw new Error("Không thể xử lý định dạng trả về từ AI.");
     }
   },
 
   async getWordInfo(word: string): Promise<WordInfo> {
+    const ai = new GoogleGenAI({ apiKey: getSafeApiKey() });
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: `Dịch từ tiếng Anh: "${word}" sang tiếng Việt và cho phiên âm IPA.`,
+      contents: `Tra từ điển từ: "${word}". Trả về JSON gồm: word, translation (tiếng Việt), phonetic (IPA).`,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -67,6 +68,7 @@ export const geminiService = {
   },
 
   async generateSpeech(text: string): Promise<Uint8Array | null> {
+    const ai = new GoogleGenAI({ apiKey: getSafeApiKey() });
     try {
       const response = await ai.models.generateContent({
         model: "gemini-2.5-flash-preview-tts",

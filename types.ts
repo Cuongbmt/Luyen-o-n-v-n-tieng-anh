@@ -12,6 +12,14 @@ export interface WordInfo {
   phonetic: string;
 }
 
+export interface Lesson {
+  id: string;
+  title: string;
+  fullText: string;
+  sentences: Sentence[];
+  createdAt: number;
+}
+
 export interface PracticeState {
   currentSentenceId: string | null;
   repeatCount: number;
