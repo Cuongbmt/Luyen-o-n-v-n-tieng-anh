@@ -1,7 +1,8 @@
-
 import { GoogleGenAI, Modality, Type } from "@google/genai";
 import { WordInfo, Sentence } from "../types";
 
+// The API key is obtained exclusively from process.env.API_KEY.
+// We rely on the shim in index.tsx/index.html to avoid ReferenceErrors.
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
 
 export const geminiService = {
@@ -29,7 +30,6 @@ export const geminiService = {
       return JSON.parse(response.text);
     } catch (e) {
       console.error("Failed to parse split sentences JSON", e);
-      // Fallback
       return [{ text, translation: "Lỗi xử lý", phonetic: "N/A" }];
     }
   },
@@ -78,7 +78,6 @@ export const geminiService = {
   }
 };
 
-// Audio Utilities
 export function decode(base64: string) {
   const binaryString = atob(base64);
   const len = binaryString.length;
