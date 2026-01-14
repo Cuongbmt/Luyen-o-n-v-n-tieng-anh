@@ -1,15 +1,20 @@
 import { GoogleGenAI, Modality, Type } from "@google/genai";
 import { WordInfo, Sentence } from "../types";
 
-// The API key is obtained exclusively from process.env.API_KEY.
-// We rely on the shim in index.tsx/index.html to avoid ReferenceErrors.
+// Khởi tạo AI client
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
 
 export const geminiService = {
+  /**
+   * Tách văn bản thành các câu kèm phiên âm và dịch thuật
+   */
   async splitSentences(text: string): Promise<Omit<Sentence, 'id'>[]> {
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: `Split the following English text into individual sentences. For each sentence, provide its Vietnamese translation and its International Phonetic Alphabet (IPA) pronunciation for the whole sentence. Return as a clean JSON array of objects. Text: "${text}"`,
+      contents: `Phân tích đoạn văn tiếng Anh sau. Tách nó thành từng câu riêng biệt. Với mỗi câu, hãy cung cấp: 
+      1. Bản dịch tiếng Việt chính xác.
+      2. Phiên âm IPA (International Phonetic Alphabet) cho toàn bộ câu đó.
+      Trả về kết quả dưới dạng JSON array. Text: "${text}"`,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -17,27 +22,31 @@ export const geminiService = {
           items: {
             type: Type.OBJECT,
             properties: {
-              text: { type: Type.STRING, description: "The original English sentence" },
-              translation: { type: Type.STRING, description: "Vietnamese translation" },
-              phonetic: { type: Type.STRING, description: "IPA pronunciation for the whole sentence" }
+              text: { type: Type.STRING, description: "Câu tiếng Anh gốc" },
+              translation: { type: Type.STRING, description: "Bản dịch tiếng Việt" },
+              phonetic: { type: Type.STRING, description: "Phiên âm IPA của cả câu" }
             },
             required: ["text", "translation", "phonetic"]
           }
         }
       }
     });
+
     try {
-      return JSON.parse(response.text);
+      return JSON.parse(response.text || "[]");
     } catch (e) {
-      console.error("Failed to parse split sentences JSON", e);
-      return [{ text, translation: "Lỗi xử lý", phonetic: "N/A" }];
+      console.error("Lỗi parse JSON sentences:", e);
+      return [{ text, translation: "Không thể dịch câu này", phonetic: "N/A" }];
     }
   },
 
+  /**
+   * Tra cứu thông tin chi tiết một từ
+   */
   async getWordInfo(word: string): Promise<WordInfo> {
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: `Provide the Vietnamese translation and international phonetic alphabet (IPA) for the English word: "${word}".`,
+      contents: `Tra từ điển cho từ tiếng Anh: "${word}". Cung cấp bản dịch tiếng Việt và phiên âm IPA.`,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -51,9 +60,12 @@ export const geminiService = {
         }
       }
     });
-    return JSON.parse(response.text);
+    return JSON.parse(response.text || "{}");
   },
 
+  /**
+   * Chuyển văn bản thành giọng nói (TTS)
+   */
   async generateSpeech(text: string): Promise<Uint8Array | null> {
     try {
       const response = await ai.models.generateContent({
@@ -63,36 +75,41 @@ export const geminiService = {
           responseModalities: [Modality.AUDIO],
           speechConfig: {
             voiceConfig: {
-              prebuiltVoiceConfig: { voiceName: 'Kore' },
+              prebuiltVoiceConfig: { voiceName: 'Kore' }, // Giọng nam trầm ấm, dễ nghe
             },
           },
         },
       });
       const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
       if (!base64Audio) return null;
-      return decode(base64Audio);
+      return decodeBase64(base64Audio);
     } catch (error) {
-      console.error("TTS generation failed", error);
+      console.error("Lỗi tạo giọng nói:", error);
       return null;
     }
   }
 };
 
-export function decode(base64: string) {
+/**
+ * Giải mã Base64 thành Uint8Array
+ */
+function decodeBase64(base64: string): Uint8Array {
   const binaryString = atob(base64);
-  const len = binaryString.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
     bytes[i] = binaryString.charCodeAt(i);
   }
   return bytes;
 }
 
+/**
+ * Giải mã dữ liệu PCM từ API thành AudioBuffer để phát
+ */
 export async function decodeAudioData(
   data: Uint8Array,
   ctx: AudioContext,
-  sampleRate: number,
-  numChannels: number,
+  sampleRate: number = 24000,
+  numChannels: number = 1
 ): Promise<AudioBuffer> {
   const dataInt16 = new Int16Array(data.buffer);
   const frameCount = dataInt16.length / numChannels;

@@ -1,11 +1,11 @@
-// Shim process for environments where it is missing to prevent ReferenceErrors
-if (typeof window !== 'undefined' && !(window as any).process) {
-  (window as any).process = { env: { API_KEY: '' } };
-}
-
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+
+// Thêm shim một lần nữa ở mức module để đảm bảo các file import sau này không bị lỗi
+if (typeof window !== 'undefined' && !(window as any).process) {
+  (window as any).process = { env: { API_KEY: '' } };
+}
 
 const rootElement = document.getElementById('root');
 if (rootElement) {
@@ -15,6 +15,4 @@ if (rootElement) {
       <App />
     </React.StrictMode>
   );
-} else {
-  console.error("Critical error: Root element for React application not found.");
 }

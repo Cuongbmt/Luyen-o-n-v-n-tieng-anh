@@ -1,10 +1,9 @@
-
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { Sentence } from './types';
 import { geminiService, decodeAudioData } from './services/geminiService';
 import SentenceItem from './components/SentenceItem';
 import WordModal from './components/WordModal';
-import { Upload, BookOpen, Layers, MessageSquare, Trash2, Github, Sparkles } from 'lucide-react';
+import { Upload, BookOpen, Layers, MessageSquare, Trash2, Sparkles, Loader2 } from 'lucide-react';
 
 const REPEAT_LIMIT = 10;
 
@@ -14,7 +13,7 @@ const App: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [selectedWord, setSelectedWord] = useState<string | null>(null);
   
-  // Practice state
+  // Trạng thái luyện tập
   const [practicingId, setPracticingId] = useState<string | null>(null);
   const [repeatCount, setRepeatCount] = useState(0);
   const [isAudioLoading, setIsAudioLoading] = useState(false);
@@ -22,36 +21,38 @@ const App: React.FC = () => {
   const audioContextRef = useRef<AudioContext | null>(null);
   const stopRequestedRef = useRef(false);
 
-  // Initialize Audio Context on user interaction if needed
-  const initAudio = () => {
-    if (!audioContextRef.current) {
+  // Khởi tạo AudioContext sau tương tác của người dùng
+  const ensureAudioContext = () => {
+    if (!audioContextRef.current || audioContextRef.current.state === 'suspended') {
       audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
     }
+    return audioContextRef.current;
   };
 
   const handleProcessText = async () => {
     if (!inputText.trim()) return;
     setIsProcessing(true);
     try {
-      const processedSentences = await geminiService.splitSentences(inputText);
-      const mapped = processedSentences.map((s, idx) => ({
-        id: `s-${Date.now()}-${idx}`,
+      const processed = await geminiService.splitSentences(inputText);
+      const mapped = processed.map((s, idx) => ({
+        id: `sentence-${Date.now()}-${idx}`,
         ...s
       }));
       setSentences(mapped);
     } catch (e) {
-      console.error("Process error:", e);
+      console.error("Lỗi xử lý văn bản:", e);
+      alert("Đã có lỗi xảy ra khi phân tích văn bản. Vui lòng thử lại.");
     } finally {
       setIsProcessing(false);
     }
   };
 
   const startPractice = useCallback(async (id: string) => {
-    initAudio();
+    const ctx = ensureAudioContext();
     const sentence = sentences.find(s => s.id === id);
     if (!sentence) return;
 
-    // Reset state for new practice
+    // Reset trạng thái
     setPracticingId(id);
     setRepeatCount(0);
     stopRequestedRef.current = false;
@@ -60,147 +61,123 @@ const App: React.FC = () => {
     const audioBytes = await geminiService.generateSpeech(sentence.text);
     setIsAudioLoading(false);
     
-    if (!audioBytes || !audioContextRef.current) return;
-    const buffer = await decodeAudioData(audioBytes, audioContextRef.current, 24000, 1);
+    if (!audioBytes) {
+      alert("Không thể tạo giọng nói cho câu này.");
+      setPracticingId(null);
+      return;
+    }
+
+    const buffer = await decodeAudioData(audioBytes, ctx);
 
     for (let i = 1; i <= REPEAT_LIMIT; i++) {
       if (stopRequestedRef.current) break;
       
       setRepeatCount(i);
-      await playBuffer(buffer);
-      if (i < REPEAT_LIMIT) {
-        // Small delay between repeats
-        await new Promise(resolve => setTimeout(resolve, 800));
+      await playBuffer(buffer, ctx);
+      
+      if (i < REPEAT_LIMIT && !stopRequestedRef.current) {
+        // Nghỉ 1 giây giữa các lần lặp
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
     
-    // Check if we didn't start a new practice in the meantime
-    setPracticingId(prev => prev === id ? null : prev);
+    setPracticingId(null);
     setRepeatCount(0);
   }, [sentences]);
 
-  const playBuffer = (buffer: AudioBuffer) => {
+  const playBuffer = (buffer: AudioBuffer, ctx: AudioContext) => {
     return new Promise<void>((resolve) => {
-      if (!audioContextRef.current) return resolve();
-      const source = audioContextRef.current.createBufferSource();
+      const source = ctx.createBufferSource();
       source.buffer = buffer;
-      source.connect(audioContextRef.current.destination);
+      source.connect(ctx.destination);
       source.onended = () => resolve();
       source.start();
     });
   };
 
   const handleClear = () => {
+    stopRequestedRef.current = true;
     setSentences([]);
     setInputText('');
     setPracticingId(null);
-    stopRequestedRef.current = true;
   };
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-12 pb-24">
+    <div className="max-w-4xl mx-auto px-4 py-10 pb-20">
       {/* Header */}
-      <header className="flex flex-col items-center mb-12 text-center">
-        <div className="w-16 h-16 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl flex items-center justify-center text-white mb-4 shadow-xl rotate-3">
-          <BookOpen size={32} />
+      <header className="flex flex-col items-center mb-10 text-center">
+        <div className="w-14 h-14 bg-blue-600 rounded-xl flex items-center justify-center text-white mb-4 shadow-lg">
+          <BookOpen size={28} />
         </div>
-        <h1 className="text-4xl font-extrabold text-slate-900 mb-2">EngRepeat AI</h1>
-        <p className="text-slate-500 max-w-lg">
-          Tách đoạn văn thành câu, cung cấp phiên âm IPA, dịch tiếng Việt và luyện nghe lặp lại 10 lần.
-        </p>
+        <h1 className="text-3xl font-bold text-slate-800 mb-2 italic">EngRepeat AI</h1>
+        <p className="text-slate-500 text-sm">Luyện nghe sâu bằng phương pháp lặp lại 10 lần (Shadowing)</p>
       </header>
 
-      {/* Main Content */}
-      <main className="space-y-8">
-        {sentences.length === 0 ? (
-          <div className="bg-white p-8 rounded-3xl shadow-xl border border-slate-100 transition-all">
-            <div className="flex items-center gap-3 mb-6 text-blue-600 font-bold text-lg">
-              <Upload size={24} />
-              <h2>Dán đoạn văn tiếng Anh của bạn</h2>
-            </div>
-            <textarea
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              placeholder="Ví dụ: Learning English is an exciting journey. Consistency is the key to success..."
-              className="w-full h-48 p-5 rounded-2xl bg-slate-50 border-2 border-slate-200 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all text-lg resize-none"
-            />
-            <button
-              onClick={handleProcessText}
-              disabled={isProcessing || !inputText.trim()}
-              className="w-full mt-6 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:from-slate-300 disabled:to-slate-300 text-white font-bold py-4 rounded-2xl shadow-lg shadow-blue-200 transition-all flex items-center justify-center gap-2 text-lg active:scale-95"
+      {/* Input Section */}
+      {sentences.length === 0 ? (
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+          <label className="flex items-center gap-2 mb-4 text-slate-700 font-semibold">
+            <MessageSquare size={20} className="text-blue-500" />
+            Nhập đoạn văn tiếng Anh
+          </label>
+          <textarea
+            value={inputText}
+            onChange={(e) => setInputText(e.target.value)}
+            placeholder="Dán đoạn văn bạn muốn luyện tập vào đây..."
+            className="w-full h-40 p-4 rounded-xl bg-slate-50 border border-slate-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition-all resize-none text-slate-800"
+          />
+          <button
+            onClick={handleProcessText}
+            disabled={isProcessing || !inputText.trim()}
+            className="w-full mt-4 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-bold py-3.5 rounded-xl shadow-md transition-all flex items-center justify-center gap-2"
+          >
+            {isProcessing ? (
+              <Loader2 className="animate-spin" size={20} />
+            ) : (
+              <Sparkles size={20} />
+            )}
+            {isProcessing ? 'Đang phân tích câu...' : 'Bắt đầu luyện tập'}
+          </button>
+        </div>
+      ) : (
+        <div className="space-y-6">
+          <div className="flex justify-between items-center bg-white/80 backdrop-blur p-4 rounded-xl border border-slate-200 sticky top-4 z-20 shadow-sm">
+            <h2 className="font-bold text-slate-700 flex items-center gap-2">
+              <Layers size={20} className="text-blue-500" />
+              Danh sách câu ({sentences.length})
+            </h2>
+            <button 
+              onClick={handleClear}
+              className="text-red-500 hover:bg-red-50 px-3 py-1.5 rounded-lg transition-colors text-sm font-medium flex items-center gap-1"
             >
-              {isProcessing ? (
-                <>
-                  <Sparkles className="animate-pulse" size={24} />
-                  Đang xử lý phiên âm & dịch...
-                </>
-              ) : (
-                <>
-                  <MessageSquare size={24} />
-                  Bắt đầu học ngay
-                </>
-              )}
+              <Trash2 size={16} /> Làm mới
             </button>
           </div>
-        ) : (
-          <div className="space-y-6">
-            <div className="flex justify-between items-center mb-4 sticky top-4 z-10 bg-slate-50/80 backdrop-blur-md py-3 px-2 rounded-xl">
-              <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                <Layers className="text-blue-500" size={24} />
-                Danh sách luyện tập
-              </h2>
-              <button 
-                onClick={handleClear}
-                className="flex items-center gap-2 px-4 py-2 text-red-500 hover:bg-red-50 rounded-xl transition-colors font-medium"
-              >
-                <Trash2 size={18} />
-                Xóa tất cả
-              </button>
-            </div>
-            
-            <div className="space-y-4">
-              {sentences.map((sentence) => (
-                <SentenceItem
-                  key={sentence.id}
-                  sentence={sentence}
-                  onWordClick={setSelectedWord}
-                  onPractice={startPractice}
-                  isPracticing={practicingId === sentence.id}
-                  repeatCount={repeatCount}
-                  totalRepeats={REPEAT_LIMIT}
-                  isAudioLoading={isAudioLoading}
-                />
-              ))}
-            </div>
+          
+          <div className="grid gap-4">
+            {sentences.map((sentence) => (
+              <SentenceItem
+                key={sentence.id}
+                sentence={sentence}
+                onWordClick={setSelectedWord}
+                onPractice={startPractice}
+                isPracticing={practicingId === sentence.id}
+                repeatCount={repeatCount}
+                totalRepeats={REPEAT_LIMIT}
+                isAudioLoading={isAudioLoading}
+              />
+            ))}
           </div>
-        )}
-      </main>
+        </div>
+      )}
 
-      {/* Modals */}
+      {/* Modal */}
       {selectedWord && (
         <WordModal word={selectedWord} onClose={() => setSelectedWord(null)} />
       )}
 
-      {/* Tips Section */}
-      {sentences.length > 0 && (
-        <div className="mt-12 p-6 bg-blue-50 rounded-2xl border border-blue-100 text-blue-800 shadow-sm">
-          <h3 className="font-bold flex items-center gap-2 mb-2">
-            <Sparkles size={18} />
-            Mẹo học tập
-          </h3>
-          <ul className="text-sm space-y-1 list-disc list-inside opacity-90">
-            <li>Nhấn vào <strong>từng từ</strong> để xem nghĩa chi tiết và cách phát âm riêng của từ đó.</li>
-            <li>Dùng nút <strong>Lặp lại 10 lần</strong> để luyện shadowing (nói đuổi) cho đến khi trôi chảy.</li>
-            <li>Phần phiên âm IPA dưới mỗi câu giúp bạn hình dung cách nối âm và trọng âm câu.</li>
-          </ul>
-        </div>
-      )}
-
-      <footer className="mt-20 pt-8 border-t border-slate-200 flex flex-col items-center gap-4 text-slate-400">
-        <div className="flex items-center gap-6">
-          <a href="#" className="hover:text-slate-600 transition-colors"><Github size={20} /></a>
-        </div>
-        <p className="text-xs font-medium uppercase tracking-widest">Powered by Gemini AI 2.5</p>
+      <footer className="mt-16 text-center text-slate-400 text-xs">
+        <p>&copy; 2024 EngRepeat AI - Cải thiện phát âm của bạn</p>
       </footer>
     </div>
   );
