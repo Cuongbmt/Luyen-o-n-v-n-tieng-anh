@@ -1,13 +1,18 @@
 import { GoogleGenAI, Modality, Type } from "@google/genai";
 import { WordInfo, Sentence } from "../types";
 
-// Khởi tạo AI client
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+// Hàm lấy API Key an toàn
+const getSafeApiKey = () => {
+  try {
+    return process.env.API_KEY || '';
+  } catch (e) {
+    return '';
+  }
+};
+
+const ai = new GoogleGenAI({ apiKey: getSafeApiKey() });
 
 export const geminiService = {
-  /**
-   * Tách văn bản thành các câu kèm phiên âm và dịch thuật
-   */
   async splitSentences(text: string): Promise<Omit<Sentence, 'id'>[]> {
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
@@ -22,9 +27,9 @@ export const geminiService = {
           items: {
             type: Type.OBJECT,
             properties: {
-              text: { type: Type.STRING, description: "Câu tiếng Anh gốc" },
-              translation: { type: Type.STRING, description: "Bản dịch tiếng Việt" },
-              phonetic: { type: Type.STRING, description: "Phiên âm IPA của cả câu" }
+              text: { type: Type.STRING },
+              translation: { type: Type.STRING },
+              phonetic: { type: Type.STRING }
             },
             required: ["text", "translation", "phonetic"]
           }
@@ -33,20 +38,18 @@ export const geminiService = {
     });
 
     try {
-      return JSON.parse(response.text || "[]");
+      const result = JSON.parse(response.text || "[]");
+      return result;
     } catch (e) {
-      console.error("Lỗi parse JSON sentences:", e);
-      return [{ text, translation: "Không thể dịch câu này", phonetic: "N/A" }];
+      console.error("Error parsing JSON:", e);
+      return [{ text, translation: "Lỗi phân tích văn bản", phonetic: "N/A" }];
     }
   },
 
-  /**
-   * Tra cứu thông tin chi tiết một từ
-   */
   async getWordInfo(word: string): Promise<WordInfo> {
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: `Tra từ điển cho từ tiếng Anh: "${word}". Cung cấp bản dịch tiếng Việt và phiên âm IPA.`,
+      contents: `Dịch từ tiếng Anh: "${word}" sang tiếng Việt và cho phiên âm IPA.`,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -63,9 +66,6 @@ export const geminiService = {
     return JSON.parse(response.text || "{}");
   },
 
-  /**
-   * Chuyển văn bản thành giọng nói (TTS)
-   */
   async generateSpeech(text: string): Promise<Uint8Array | null> {
     try {
       const response = await ai.models.generateContent({
@@ -75,7 +75,7 @@ export const geminiService = {
           responseModalities: [Modality.AUDIO],
           speechConfig: {
             voiceConfig: {
-              prebuiltVoiceConfig: { voiceName: 'Kore' }, // Giọng nam trầm ấm, dễ nghe
+              prebuiltVoiceConfig: { voiceName: 'Kore' },
             },
           },
         },
@@ -84,15 +84,12 @@ export const geminiService = {
       if (!base64Audio) return null;
       return decodeBase64(base64Audio);
     } catch (error) {
-      console.error("Lỗi tạo giọng nói:", error);
+      console.error("TTS Error:", error);
       return null;
     }
   }
 };
 
-/**
- * Giải mã Base64 thành Uint8Array
- */
 function decodeBase64(base64: string): Uint8Array {
   const binaryString = atob(base64);
   const bytes = new Uint8Array(binaryString.length);
@@ -102,9 +99,6 @@ function decodeBase64(base64: string): Uint8Array {
   return bytes;
 }
 
-/**
- * Giải mã dữ liệu PCM từ API thành AudioBuffer để phát
- */
 export async function decodeAudioData(
   data: Uint8Array,
   ctx: AudioContext,
